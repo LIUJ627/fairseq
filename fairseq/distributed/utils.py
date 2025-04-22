@@ -48,18 +48,24 @@ def infer_init_method(cfg: DistributedTrainingConfig, force_distributed=False):
         return
 
     num_pipelines_per_node = None
+    print("Start infer parallel init method")
     if cfg.pipeline_model_parallel:
         num_pipeline_devices, num_pipelines_per_node = _pipeline_parallel_pre_init(cfg)
-
+        print("Finish infer parallel init method")
+    logger.info("total number of GPUs across all nodes: ",cfg.distributed_world_size)    
+    
     if cfg.distributed_world_size == 1:
+        print(1)
         return
     if all(
         key in os.environ
         for key in ["MASTER_ADDR", "MASTER_PORT", "WORLD_SIZE", "RANK"]
     ):
+        print(2)
         # support torch.distributed.launch
         _infer_torch_distributed_launch_init(cfg)
     else:
+        print(3)
         # we can determine the init method automatically for Slurm
         if not _infer_slurm_init(cfg, num_pipelines_per_node):
             if cfg.distributed_port <= 0 or force_distributed:
@@ -68,14 +74,18 @@ def infer_init_method(cfg: DistributedTrainingConfig, force_distributed=False):
             _infer_single_node_init(cfg)
 
     if cfg.pipeline_model_parallel:
+        print(4)
         _pipeline_parallel_post_init(cfg, num_pipeline_devices, num_pipelines_per_node)
     elif not cfg.distributed_no_spawn:
+        print(5)
         with open_dict(cfg):
             cfg.distributed_num_procs = min(
                 torch.cuda.device_count(), cfg.distributed_world_size
             )
     else:
+        print(6)
         if cfg.device_id > 0:
+            print(7)
             logger.info(
                 "setting CUDA device={} on rank {}".format(
                     cfg.device_id, cfg.distributed_rank
@@ -224,6 +234,9 @@ def _pipeline_parallel_pre_init(cfg: DistributedTrainingConfig):
         "the number of GPUs per node (multi-node pipelining is not yet supported)"
     )
     num_pipelines_per_node = gpus_per_node // num_pipeline_devices
+    logger.info("Return pipeline divices success")
+    print("num_pipeline_devices", num_pipeline_devices)
+    print("num_pipelines_per_node", num_pipelines_per_node)
     return num_pipeline_devices, num_pipelines_per_node
 
 
@@ -231,6 +244,7 @@ def _pipeline_parallel_post_init(
     cfg: DistributedTrainingConfig, num_pipeline_devices, num_pipelines_per_node
 ):
     if not cfg.distributed_no_spawn:
+        print(6)
         # When distributed_no_spawn is False, we expect distributed_rank and
         # distributed_world_size to be based on the total number of GPUs, so
         # we need to correct them to be based on the number of pipelines.
@@ -251,8 +265,11 @@ def _pipeline_parallel_post_init(
     # if we have 4-way MP on a node with 8 GPUs, we want device_ids to be 0
     # and 4, indicating the starting device IDs for each pipeline
     cfg.device_id *= num_pipeline_devices
-
+    print("cfg.device_id", cfg.device_id)
+    print("cfg.distributed_rank", cfg.distributed_rank)
+    
     if cfg.device_id > 0:
+        print(7)
         # if there's multiple pipelines on a node (e.g., 4-way MP on an 8
         # GPU node), we need to adjust pipeline_devices accordingly
         logger.debug(
@@ -268,7 +285,7 @@ def _pipeline_parallel_post_init(
                 cfg.pipeline_devices, cfg.distributed_rank
             )
         )
-
+    print("post init pipeline devices success")
 
 def distributed_init(cfg: FairseqConfig):
     if isinstance(cfg, Namespace):
@@ -368,8 +385,10 @@ def distributed_main(i, main, cfg: FairseqConfig, kwargs):
 def call_main(cfg: FairseqConfig, main, **kwargs):
     if cfg.distributed_training.distributed_init_method is None:
         infer_init_method(cfg.distributed_training)
+        print("Finish infer init method")
 
     if cfg.distributed_training.distributed_init_method is not None:
+        print("Start main")
         # distributed training
         if not cfg.distributed_training.distributed_no_spawn:
             start_rank = cfg.distributed_training.distributed_rank
@@ -386,6 +405,7 @@ def call_main(cfg: FairseqConfig, main, **kwargs):
                 join=True,
             )
         else:
+            print("device_id", cfg.distributed_training.device_id)
             distributed_main(cfg.distributed_training.device_id, main, cfg, kwargs)
     elif cfg.common.tpu and cfg.distributed_training.distributed_world_size > 1:
         import torch_xla.distributed.xla_multiprocessing as xmp
@@ -400,6 +420,7 @@ def call_main(cfg: FairseqConfig, main, **kwargs):
             nprocs=min(cfg.distributed_training.distributed_world_size, 8),
         )
     else:
+        print("start single")
         # single GPU main
         main(cfg, **kwargs)
 
